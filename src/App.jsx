@@ -1,4 +1,5 @@
-import { useState, useRef, useCallback } from 'react'
+import { useState, useRef, useCallback, useEffect } from 'react'
+import { Routes, Route, Navigate, useParams } from 'react-router-dom'
 
 const API_BASE = 'http://localhost:8000'
 
@@ -34,7 +35,9 @@ function formatTimeRemaining(expiresAt) {
   return `${minutes}m`
 }
 
-function FileDrop() {
+
+
+function UploadPage() {
   const [isDragActive, setIsDragActive] = useState(false)
   const [selectedExpire, setSelectedExpire] = useState(EXPIRE_OPTIONS[0].value)
   const [showCustomPicker, setShowCustomPicker] = useState(false)
@@ -98,17 +101,6 @@ function FileDrop() {
     setShowCustomPicker(false)
   }
 
-  const formatExpireTime = (ms) => {
-    if (ms === 'custom') return 'Custom'
-    const hours = Math.floor(ms / (60 * 60 * 1000))
-    const minutes = Math.floor((ms % (60 * 60 * 1000)) / (60 * 1000))
-    if (hours > 0 && minutes > 0) return `${hours}h ${minutes}m`
-    if (hours > 0) return `${hours}h`
-    return `${minutes}m`
-  }
-
-  const currentExpireLabel = EXPIRE_OPTIONS.find(o => o.value === selectedExpire)?.label || formatExpireTime(selectedExpire)
-
   const handleUpload = async () => {
     if (droppedFiles.length === 0) return
 
@@ -139,8 +131,8 @@ function FileDrop() {
       const data = await res.json()
       setSuccessData(data)
       setDroppedFiles([])
-    } catch (err) {
-      setUploadError(err.message)
+    } catch (_err) {
+      setUploadError(_err.message)
     } finally {
       setUploading(false)
     }
@@ -153,7 +145,7 @@ function FileDrop() {
       await navigator.clipboard.writeText(successData.download_url)
       setCopyStatus('copied')
       setTimeout(() => setCopyStatus('idle'), 2000)
-    } catch (err) {
+    } catch {
       setCopyStatus('failed')
       setTimeout(() => setCopyStatus('idle'), 2000)
     }
@@ -423,4 +415,292 @@ function FileDrop() {
   )
 }
 
-export default FileDrop
+function DownloadPage() {
+  const { token } = useParams()
+  const [metadata, setMetadata] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
+  const [downloading, setDownloading] = useState(false)
+  const [downloadError, setDownloadError] = useState(null)
+  const [showPasswordModal, setShowPasswordModal] = useState(false)
+  const [password, setPassword] = useState('')
+  const [passwordError, setPasswordError] = useState('')
+  const [countdown, setCountdown] = useState('')
+
+  useEffect(() => {
+    const fetchMetadata = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/api/v1/files/${token}`)
+        if (!res.ok) {
+          setError(true)
+          return
+        }
+        const data = await res.json()
+        setMetadata(data)
+      } catch {
+        setError(true)
+      } finally {
+        setLoading(false)
+      }
+    }
+    fetchMetadata()
+  }, [token])
+
+  useEffect(() => {
+    if (!metadata) return
+
+    const updateCountdown = () => {
+      const now = new Date()
+      const expiry = new Date(metadata.expires_at)
+      const diffMs = expiry - now
+
+      if (diffMs <= 0) {
+        setCountdown('Expired')
+        setError(true)
+        setMetadata(null)
+        return
+      }
+
+      const totalSeconds = Math.floor(diffMs / 1000)
+      const hours = Math.floor(totalSeconds / 3600)
+      const minutes = Math.floor((totalSeconds % 3600) / 60)
+      const seconds = totalSeconds % 60
+
+      if (hours > 0) {
+        setCountdown(`${hours}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`)
+      } else {
+        setCountdown(`${minutes}:${seconds.toString().padStart(2, '0')}`)
+      }
+    }
+
+    updateCountdown()
+    const interval = setInterval(updateCountdown, 1000)
+    return () => clearInterval(interval)
+  }, [metadata])
+
+  const handleDownload = async () => {
+    if (!metadata) return
+
+    if (metadata.password_required) {
+      setShowPasswordModal(true)
+      return
+    }
+
+    setDownloading(true)
+    setDownloadError(null)
+
+    try {
+      const res = await fetch(`${API_BASE}/api/v1/files/${token}/download`)
+      if (!res.ok) {
+        const err = await res.json()
+        throw new Error(err.detail?.message || 'Download failed')
+      }
+
+      const blob = await res.blob()
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = metadata.filename
+      document.body.appendChild(a)
+      a.click()
+      window.URL.revokeObjectURL(url)
+      document.body.removeChild(a)
+    } catch (_err) {
+      setDownloadError(_err.message)
+    } finally {
+      setDownloading(false)
+    }
+  }
+
+  const handlePasswordDownload = async () => {
+    setPasswordError('')
+    setDownloading(true)
+
+    try {
+      const verifyRes = await fetch(`${API_BASE}/api/v1/files/${token}/verify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password }),
+      })
+
+      if (!verifyRes.ok) {
+        const err = await verifyRes.json()
+        throw new Error(err.detail?.message || 'Invalid password')
+      }
+
+      const { download_url } = await verifyRes.json()
+      const res = await fetch(download_url)
+
+      if (!res.ok) {
+        const err = await res.json()
+        throw new Error(err.detail?.message || 'Download failed')
+      }
+
+      const blob = await res.blob()
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = metadata.filename
+      document.body.appendChild(a)
+      a.click()
+      window.URL.revokeObjectURL(url)
+      document.body.removeChild(a)
+
+      setShowPasswordModal(false)
+      setPassword('')
+    } catch (_err) {
+      setPasswordError(_err.message)
+    } finally {
+      setDownloading(false)
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4">
+        <div className="w-full max-w-md bg-white rounded-xl shadow-sm border border-gray-200 p-8 text-center">
+          <div className="flex items-center justify-center w-12 h-12 mx-auto mb-4 bg-blue-100 rounded-full animate-pulse">
+            <svg className="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          </div>
+          <p className="text-gray-600">Loading file info...</p>
+        </div>
+      </div>
+    )
+  }
+
+  if (error || !metadata) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4">
+        <div className="w-full max-w-md bg-white rounded-xl shadow-sm border border-gray-200 p-8 text-center animate-fade-in">
+          <div className="flex items-center justify-center w-16 h-16 mx-auto mb-6 bg-amber-100 rounded-full">
+            <svg className="w-8 h-8 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
+          </div>
+          <h1 className="text-2xl font-semibold text-gray-900 mb-2">Link Expired</h1>
+          <p className="text-gray-600 leading-relaxed">
+            This file is no longer available.
+          </p>
+          <p className="text-gray-500 text-sm mt-2">
+            The link may have expired or reached its download limit.
+          </p>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="min-h-screen bg-gray-50 flex flex-col items-center py-12 px-4">
+      <div className="fixed top-4 right-4 text-xs text-gray-400 font-mono">
+        v1.0.0
+      </div>
+
+      <div className="w-full max-w-md bg-white rounded-xl shadow-sm border border-gray-200 p-8 animate-scale-in">
+        <div className="flex items-baseline gap-1 mb-10">
+          <span className="text-3xl font-semibold text-blue-600">File</span>
+          <span className="text-3xl font-semibold text-gray-900">Drop</span>
+        </div>
+
+        <div className="text-center mb-8">
+          <div className="flex items-center justify-center w-16 h-16 mx-auto mb-4 bg-blue-100 rounded-full">
+            <svg className="w-8 h-8 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+            </svg>
+          </div>
+          <h2 className="text-2xl font-semibold text-gray-900 mb-1">{metadata.filename}</h2>
+          <p className="text-gray-500">{formatFileSize(metadata.size)}</p>
+        </div>
+
+        <div className="mb-6 p-4 bg-gray-50 rounded-lg border border-gray-200 text-center">
+          <p className="text-sm text-gray-600">Expires in</p>
+          <p className="text-2xl font-mono font-semibold text-blue-600 mt-1">{countdown || formatTimeRemaining(metadata.expires_at)}</p>
+        </div>
+
+        {downloadError && (
+          <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
+            {downloadError}
+          </div>
+        )}
+
+        <button
+          onClick={handleDownload}
+          disabled={downloading}
+          className="w-full py-3 px-6 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {downloading ? 'Downloading...' : 'Download'}
+        </button>
+
+        {metadata.password_required && (
+          <p className="mt-4 text-center text-sm text-gray-500">
+            This file is password protected
+          </p>
+        )}
+
+        {metadata.download_limit && (
+          <p className="mt-4 text-center text-sm text-gray-500">
+            Downloads: {metadata.download_count} / {metadata.download_limit}
+          </p>
+        )}
+      </div>
+
+      {showPasswordModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 animate-fade-in">
+          <div className="bg-white rounded-xl shadow-xl max-w-sm w-full p-6 animate-scale-in">
+            <div className="flex items-center justify-center w-12 h-12 mx-auto mb-4 bg-blue-100 rounded-full">
+              <svg className="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+              </svg>
+            </div>
+            <h3 className="text-lg font-semibold text-gray-900 text-center mb-2">Password Required</h3>
+            <p className="text-gray-600 text-center mb-6">Enter the password to download this file</p>
+
+            {passwordError && (
+              <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm text-center">
+                {passwordError}
+              </div>
+            )}
+
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="Enter password"
+              className="w-full px-4 py-3 border border-gray-300 rounded-lg text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white mb-4"
+              autoFocus
+            />
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => { setShowPasswordModal(false); setPassword(''); setPasswordError(''); }}
+                className="flex-1 py-2 px-4 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handlePasswordDownload}
+                disabled={downloading}
+                className="flex-1 py-2 px-4 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {downloading ? 'Downloading...' : 'Download'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function App() {
+  return (
+    <Routes>
+      <Route path="/" element={<UploadPage />} />
+      <Route path="/f/:token" element={<DownloadPage />} />
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
+  )
+}
+
+export default App
