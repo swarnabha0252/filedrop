@@ -4,7 +4,7 @@ from app.core.config import settings
 from app.db.base import Base
 
 engine = create_async_engine(
-    settings.DATABASE_URL,
+    settings.database_url_pooled,
     echo=settings.APP_ENV == "development",
     future=True,
 )

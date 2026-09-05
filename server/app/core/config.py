@@ -8,6 +8,7 @@ from pydantic import Field
 class Settings(BaseSettings):
     APP_ENV: str = "development"
     DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/filedrop"
+    DATABASE_URL_UNPOOLED: str | None = None
     MAX_FILE_SIZE_MB: int = 100
     FRONTEND_URL: str = "http://localhost:5173"
     STORAGE_BACKEND: str = "local"
@@ -26,6 +27,26 @@ class Settings(BaseSettings):
     @property
     def max_file_size_bytes(self) -> int:
         return self.MAX_FILE_SIZE_MB * 1024 * 1024
+
+    @property
+    def database_url_pooled(self) -> str:
+        """Return the pooled connection URL for application runtime.
+        Prefers Vercel Neon's DATABASE_DATABASE_URL, falls back to DATABASE_URL.
+        """
+        return os.getenv("DATABASE_DATABASE_URL") or self.DATABASE_URL
+
+    @property
+    def database_url_unpooled(self) -> str:
+        """Return the unpooled/direct connection URL for migrations.
+        Prefers Vercel Neon's DATABASE_DATABASE_URL_UNPOOLED, falls back to DATABASE_URL_UNPOOLED,
+        then to DATABASE_URL.
+        """
+        return (
+            os.getenv("DATABASE_DATABASE_URL_UNPOOLED")
+            or os.getenv("DATABASE_POSTGRES_URL_NON_POOLING")
+            or self.DATABASE_URL_UNPOOLED
+            or self.database_url_pooled
+        )
 
 
 settings = Settings()
