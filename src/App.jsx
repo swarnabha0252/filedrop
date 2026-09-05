@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { Routes, Route, Navigate, useParams } from 'react-router-dom'
 
-const API_BASE = 'http://localhost:8000'
+const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
 const EXPIRE_OPTIONS = [
   { label: '30 mins', value: 30 * 60 * 1000 },
