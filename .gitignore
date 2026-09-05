@@ -22,3 +22,28 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.env
+.env.local
+.env.*.local
+
+# Server
+server/__pycache__/
+server/app/__pycache__/
+server/tests/__pycache__/
+server/migrations/__pycache__/
+server/migrations/versions/__pycache__/
+server/storage/
+server/.venv/
+
+# IDE
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/

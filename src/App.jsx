@@ -1,5 +1,7 @@
 import { useState, useRef, useCallback } from 'react'
 
+const API_BASE = 'http://localhost:8000'
+
 const EXPIRE_OPTIONS = [
   { label: '30 mins', value: 30 * 60 * 1000 },
   { label: '1 hr', value: 60 * 60 * 1000 },
@@ -10,6 +12,28 @@ const EXPIRE_OPTIONS = [
   { label: 'Custom', value: 'custom' },
 ]
 
+function formatFileSize(bytes) {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+function formatTimeRemaining(expiresAt) {
+  const now = new Date()
+  const expiry = new Date(expiresAt)
+  const diffMs = expiry - now
+
+  if (diffMs <= 0) return 'Expired'
+
+  const minutes = Math.floor(diffMs / 60000)
+  const hours = Math.floor(minutes / 60)
+  const days = Math.floor(hours / 24)
+
+  if (days > 0) return `${days}d ${hours % 24}h`
+  if (hours > 0) return `${hours}h ${minutes % 60}m`
+  return `${minutes}m`
+}
+
 function FileDrop() {
   const [isDragActive, setIsDragActive] = useState(false)
   const [selectedExpire, setSelectedExpire] = useState(EXPIRE_OPTIONS[0].value)
@@ -17,7 +41,12 @@ function FileDrop() {
   const [customHours, setCustomHours] = useState(0)
   const [customMinutes, setCustomMinutes] = useState(0)
   const [showConfirmPopup, setShowConfirmPopup] = useState(false)
+  const [downloadLimit, setDownloadLimit] = useState('')
   const [droppedFiles, setDroppedFiles] = useState([])
+  const [uploading, setUploading] = useState(false)
+  const [uploadError, setUploadError] = useState(null)
+  const [successData, setSuccessData] = useState(null)
+  const [copyStatus, setCopyStatus] = useState('idle')
   const fileInputRef = useRef(null)
 
   const handleDrag = useCallback((e) => {
@@ -80,6 +109,123 @@ function FileDrop() {
 
   const currentExpireLabel = EXPIRE_OPTIONS.find(o => o.value === selectedExpire)?.label || formatExpireTime(selectedExpire)
 
+  const handleUpload = async () => {
+    if (droppedFiles.length === 0) return
+
+    setUploading(true)
+    setUploadError(null)
+    setSuccessData(null)
+
+    const file = droppedFiles[0]
+    const expirySeconds = Math.floor(selectedExpire / 1000)
+    const limit = downloadLimit ? parseInt(downloadLimit, 10) : null
+
+    const formData = new FormData()
+    formData.append('file', file)
+    formData.append('expiry', expirySeconds.toString())
+    if (limit) formData.append('download_limit', limit.toString())
+
+    try {
+      const res = await fetch(`${API_BASE}/api/v1/files`, {
+        method: 'POST',
+        body: formData,
+      })
+
+      if (!res.ok) {
+        const err = await res.json()
+        throw new Error(err.detail?.message || err.detail || 'Upload failed')
+      }
+
+      const data = await res.json()
+      setSuccessData(data)
+      setDroppedFiles([])
+    } catch (err) {
+      setUploadError(err.message)
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  const handleCopyLink = async () => {
+    if (!successData) return
+
+    try {
+      await navigator.clipboard.writeText(successData.download_url)
+      setCopyStatus('copied')
+      setTimeout(() => setCopyStatus('idle'), 2000)
+    } catch (err) {
+      setCopyStatus('failed')
+      setTimeout(() => setCopyStatus('idle'), 2000)
+    }
+  }
+
+  const handleNewUpload = () => {
+    setSuccessData(null)
+    setUploadError(null)
+  }
+
+  if (successData) {
+    const shareUrl = successData.download_url
+    return (
+      <div className="min-h-screen bg-gray-50 flex flex-col items-center py-12 px-4">
+        <div className="fixed top-4 right-4 text-xs text-gray-400 font-mono">
+          v1.0.0
+        </div>
+
+        <div className="w-full max-w-md bg-white rounded-xl shadow-sm border border-gray-200 p-8 animate-scale-in">
+          <div className="flex items-baseline gap-1 mb-10">
+            <span className="text-3xl font-semibold text-blue-600">File</span>
+            <span className="text-3xl font-semibold text-gray-900">Drop</span>
+          </div>
+
+          <div className="text-center mb-8">
+            <div className="flex items-center justify-center w-16 h-16 mx-auto mb-4 bg-green-100 rounded-full">
+              <svg className="w-8 h-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            </div>
+            <h2 className="text-2xl font-semibold text-gray-900 mb-1">File uploaded</h2>
+            <p className="text-gray-500">Your file is ready to share</p>
+          </div>
+
+          <div className="mb-6 p-4 bg-gray-50 rounded-lg border border-gray-200 text-center">
+            <p className="font-medium text-gray-900 truncate">{successData.filename}</p>
+            <p className="text-sm text-gray-500 mt-1">{formatFileSize(successData.size)}</p>
+          </div>
+
+          <div className="bg-blue-50 border border-blue-200 rounded-xl p-6">
+            <p className="text-sm font-medium text-blue-800 text-center mb-4">Your file is ready to share</p>
+
+            <div className="bg-white border border-blue-200 rounded-lg p-4 mb-4">
+              <div className="font-mono text-sm text-blue-900 break-all text-center select-all" id="share-link">
+                {shareUrl}
+              </div>
+            </div>
+
+            <button
+              onClick={handleCopyLink}
+              className="w-full py-3 px-6 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              disabled={copyStatus !== 'idle'}
+            >
+              {copyStatus === 'copied' ? 'Copied!' : copyStatus === 'failed' ? 'Failed' : 'Copy Link'}
+            </button>
+
+            <p className="mt-4 text-center text-sm text-blue-700">
+              Expires in {formatTimeRemaining(successData.expires_at)}
+            </p>
+          </div>
+
+          <button
+            onClick={handleNewUpload}
+            className="mt-6 w-full py-3 px-6 bg-gray-100 text-gray-700 font-medium rounded-lg hover:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-gray-400 focus:ring-offset-2 transition-colors"
+          >
+            Upload Another File
+          </button>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col items-center py-12 px-4">
       <div className="fixed top-4 right-4 text-xs text-gray-400 font-mono">
@@ -107,7 +253,6 @@ function FileDrop() {
           <input
             ref={fileInputRef}
             type="file"
-            multiple
             className="hidden"
             onChange={handleFileSelect}
           />
@@ -134,7 +279,7 @@ function FileDrop() {
                 {droppedFiles.map((file, i) => (
                   <li key={i} className="text-sm text-green-700 flex justify-between">
                     <span className="truncate pr-2">{file.name}</span>
-                    <span className="text-green-600">{(file.size / 1024).toFixed(1)} KB</span>
+                    <span className="text-green-600">{formatFileSize(file.size)}</span>
                   </li>
                 ))}
               </ul>
@@ -162,6 +307,20 @@ function FileDrop() {
               </svg>
             </div>
           </div>
+        </div>
+
+        <div className="mt-6">
+          <label className="block text-sm font-medium text-gray-700 mb-2">Download limit (optional):</label>
+          <input
+            type="number"
+            min="1"
+            placeholder="Unlimited"
+            value={downloadLimit}
+            onChange={(e) => setDownloadLimit(e.target.value)}
+            className="w-full px-4 py-3 border border-gray-300 rounded-lg text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white"
+            aria-describedby="download-limit-help"
+          />
+          <p id="download-limit-help" className="mt-1 text-xs text-gray-500">Leave empty for unlimited downloads</p>
         </div>
 
         {showCustomPicker && (
@@ -213,12 +372,19 @@ function FileDrop() {
           </div>
         )}
 
+        {uploadError && (
+          <div className="mt-6 p-4 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
+            {uploadError}
+          </div>
+        )}
+
         <button
           type="button"
+          onClick={handleUpload}
           className="mt-8 w-full py-3 px-6 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          disabled={droppedFiles.length === 0}
+          disabled={droppedFiles.length === 0 || uploading}
         >
-          Drop
+          {uploading ? 'Uploading...' : 'Drop'}
         </button>
       </div>
 
