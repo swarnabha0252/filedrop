@@ -1,4 +1,3 @@
-import magic
 import os
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -11,6 +10,7 @@ from app.services.storage_service import StorageService, get_storage_service
 from app.services.token_service import generate_public_token, generate_private_delete_token
 from app.core.security import hash_password, hash_delete_token
 from app.core.config import settings
+from app.utils.file_validation import validate_file_size, validate_mime_type
 
 
 class FileValidationError(Exception):
@@ -50,21 +50,9 @@ class FileService:
         self.storage = storage or get_storage_service()
 
     def _validate_file(self, file: BinaryIO, filename: str, content_type: str) -> tuple[str, int]:
-        file.seek(0, os.SEEK_END)
-        size = file.tell()
-        file.seek(0)
+        size = validate_file_size(file)
 
-        if size > settings.max_file_size_bytes:
-            raise FileSizeError(f"File size exceeds maximum allowed size of {settings.MAX_FILE_SIZE_MB} MB")
-
-        if size == 0:
-            raise FileValidationError("File is empty")
-
-        detected_type = magic.from_buffer(file.read(8192), mime=True)
-        file.seek(0)
-
-        if detected_type not in self.ALLOWED_MIME_TYPES:
-            raise FileTypeError(f"File type '{detected_type}' is not allowed")
+        detected_type = validate_mime_type(file, self.ALLOWED_MIME_TYPES)
 
         safe_filename = self._sanitize_filename(filename)
         return detected_type, size
