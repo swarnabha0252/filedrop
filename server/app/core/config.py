@@ -60,7 +60,9 @@ class Settings(BaseSettings):
 
     def _normalize_asyncpg_url(self, url: str) -> str:
         """Normalize PostgreSQL URL to use asyncpg dialect for async SQLAlchemy.
-        Also removes unsupported query parameters like channel_binding.
+        Removes unsupported libpq parameters (channel_binding, sslmode) and
+        converts scheme to postgresql+asyncpg://. asyncpg defaults to ssl=True
+        which works for Neon's valid certificates.
         """
         parsed = urlparse(url)
 
@@ -68,8 +70,12 @@ class Settings(BaseSettings):
             parsed = parsed._replace(scheme="postgresql+asyncpg")
 
         query_params = parse_qs(parsed.query, keep_blank_values=True)
-        if "channel_binding" in query_params:
-            del query_params["channel_binding"]
+
+        # Remove unsupported libpq parameters that asyncpg doesn't accept
+        unsupported_params = {"channel_binding", "sslmode"}
+        for param in unsupported_params:
+            if param in query_params:
+                del query_params[param]
 
         new_query = urlencode(query_params, doseq=True)
         parsed = parsed._replace(query=new_query)
