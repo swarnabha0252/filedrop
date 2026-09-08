@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
 from typing import List
+from urllib.parse import urlparse, urlunparse, parse_qs, urlencode
 from pydantic_settings import BaseSettings
 from pydantic import Field
 
@@ -58,12 +59,22 @@ class Settings(BaseSettings):
         return self._normalize_asyncpg_url(url)
 
     def _normalize_asyncpg_url(self, url: str) -> str:
-        """Normalize PostgreSQL URL to use asyncpg dialect for async SQLAlchemy."""
-        if url.startswith("postgresql://"):
-            return url.replace("postgresql://", "postgresql+asyncpg://", 1)
-        if url.startswith("postgres://"):
-            return url.replace("postgres://", "postgresql+asyncpg://", 1)
-        return url
+        """Normalize PostgreSQL URL to use asyncpg dialect for async SQLAlchemy.
+        Also removes unsupported query parameters like channel_binding.
+        """
+        parsed = urlparse(url)
+
+        if parsed.scheme in ("postgresql", "postgres"):
+            parsed = parsed._replace(scheme="postgresql+asyncpg")
+
+        query_params = parse_qs(parsed.query, keep_blank_values=True)
+        if "channel_binding" in query_params:
+            del query_params["channel_binding"]
+
+        new_query = urlencode(query_params, doseq=True)
+        parsed = parsed._replace(query=new_query)
+
+        return urlunparse(parsed)
 
 
 settings = Settings()
