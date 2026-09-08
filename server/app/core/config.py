@@ -31,22 +31,39 @@ class Settings(BaseSettings):
     @property
     def database_url_pooled(self) -> str:
         """Return the pooled connection URL for application runtime.
-        Prefers Vercel Neon's DATABASE_DATABASE_URL, falls back to DATABASE_URL.
+        Prefers Vercel Neon's DATABASE_POSTGRES_PRISMA_URL (pooled), then DATABASE_DATABASE_URL,
+        falls back to DATABASE_URL.
+        Normalizes to postgresql+asyncpg:// dialect for async SQLAlchemy.
         """
-        return os.getenv("DATABASE_DATABASE_URL") or self.DATABASE_URL
+        url = (
+            os.getenv("DATABASE_POSTGRES_PRISMA_URL")
+            or os.getenv("DATABASE_DATABASE_URL")
+            or self.DATABASE_URL
+        )
+        return self._normalize_asyncpg_url(url)
 
     @property
     def database_url_unpooled(self) -> str:
         """Return the unpooled/direct connection URL for migrations.
         Prefers Vercel Neon's DATABASE_DATABASE_URL_UNPOOLED, falls back to DATABASE_URL_UNPOOLED,
         then to DATABASE_URL.
+        Normalizes to postgresql+asyncpg:// dialect for async SQLAlchemy.
         """
-        return (
+        url = (
             os.getenv("DATABASE_DATABASE_URL_UNPOOLED")
             or os.getenv("DATABASE_POSTGRES_URL_NON_POOLING")
             or self.DATABASE_URL_UNPOOLED
             or self.database_url_pooled
         )
+        return self._normalize_asyncpg_url(url)
+
+    def _normalize_asyncpg_url(self, url: str) -> str:
+        """Normalize PostgreSQL URL to use asyncpg dialect for async SQLAlchemy."""
+        if url.startswith("postgresql://"):
+            return url.replace("postgresql://", "postgresql+asyncpg://", 1)
+        if url.startswith("postgres://"):
+            return url.replace("postgres://", "postgresql+asyncpg://", 1)
+        return url
 
 
 settings = Settings()
